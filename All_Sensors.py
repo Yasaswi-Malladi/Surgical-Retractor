@@ -2,11 +2,10 @@ from machine import Pin, I2C
 import time
 import MAX30100
 from vl53l0x import VL53L0X
+import time
 
 
-
-
-def init_spo2(pin_num=1):
+def init_spo2(pin_num=3):
     global ds_sensor, roms
     try:
         i2c = I2C(1, scl=Pin(3), sda=Pin(2), freq=100000)
@@ -16,7 +15,7 @@ def init_spo2(pin_num=1):
         BUFFER_SIZE = 100
         ir_buffer = []
         red_buffer = []
-        return True
+        return sensor
     except Exception as e:
         print("spo2 initialization error:", e)
         return False 
@@ -126,30 +125,57 @@ def read_distance(tof):
 # Main
 tof = setup_tof()
 print("Starting measurement...")
+sensor = init_spo2()
+# Simple buffers to hold data for processing
+
+# Assuming tof and sensor are already initialized,
+# and calculate_bpm, calculate_spo2 functions defined,
+# plus BUFFER_SIZE and buffers declared like:
+
+BUFFER_SIZE_SPO2 = 50
+BUFFER_SIZE_TOF = 10
+
+ir_buffer = []
+red_buffer = []
+
+tof_buffer = []
+tof_print_counter = 0
+spo2_print_counter = 0
 
 while True:
-    distance = read_distance(tof)
-    print("retractor distance",distance, "mm")
-    time.sleep(0.5)# 1hz
+    # --- Read and buffer ToF ---
+    distance = tof.ping() - 35
+    tof_buffer.append(distance)
+    if len(tof_buffer) > BUFFER_SIZE_TOF:
+        tof_buffer.pop(0)
+
+    tof_print_counter += 1
+    if tof_print_counter >= BUFFER_SIZE_TOF:
+        avg_distance = sum(tof_buffer) / len(tof_buffer)
+        print(f"Avg ToF distance (last {BUFFER_SIZE_TOF} samples): {avg_distance:.2f} mm")
+        tof_print_counter = 0
+
+    # --- Read and buffer SpO2 ---
     try:
         ir, red = sensor.read_fifo()
-
-        # Append sensor values to buffers
         ir_buffer.append(ir)
         red_buffer.append(red)
 
-        if len(ir_buffer) > BUFFER_SIZE:
+        if len(ir_buffer) > BUFFER_SIZE_SPO2:
             ir_buffer.pop(0)
             red_buffer.pop(0)
 
+        spo2_print_counter += 1
+        # Print every 50 readings (~1 second at 50Hz)
+        if spo2_print_counter >= BUFFER_SIZE_SPO2:
             bpm = calculate_bpm(ir_buffer)
             spo2 = calculate_spo2(ir_buffer, red_buffer)
-
-            print("BPM:", bpm, "SpO2:", spo2, "%")
-
-        time.sleep(0.5)  # 1 Hz approx(accounting for tof above)
+            print(f"BPM: {bpm}, SpO2: {spo2}%")
+            spo2_print_counter = 0
 
     except Exception as e:
-        print("Error:", e)
-        time.sleep(1)
+        print("MAX30100 read error:", e)
+
+    time.sleep(0.02)  # 50Hz sampling
+
 
