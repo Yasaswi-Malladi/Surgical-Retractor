@@ -129,8 +129,8 @@ tof = setup_tof()
 
 while True:
     distance = read_distance(tof)
-    print(distance, "mm")
-    time.sleep(0.1)
+    print("retractor distance",distance, "mm")
+    time.sleep(0.5)# 1hz
     try:
         ir, red = sensor.read_fifo()
 
@@ -147,7 +147,7 @@ while True:
 
             print("BPM:", bpm, "SpO2:", spo2, "%")
 
-        time.sleep(0.10)  # 50 Hz approx
+        time.sleep(0.5)  # 1 Hz approx(accounting for tof above)
 
     except Exception as e:
         print("Error:", e)
