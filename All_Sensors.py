@@ -3,7 +3,8 @@ import time
 import MAX30100
 from vl53l0x import VL53L0X
 import time
-
+# ds18b20_gpio.py
+import onewire, ds18x20
 
 def init_spo2(pin_num=3):
     global ds_sensor, roms
@@ -98,9 +99,8 @@ def wait_for_tof_sensor(i2c):
 
 def setup_tof():
     print("Setting up I2C...")
-    sda = Pin(0)
-    scl = Pin(1)
-    i2c = I2C(id=0, sda=sda, scl=scl)
+
+    i2c = I2C(id=0, sda=Pin(0), scl=Pin(1))
 
     wait_for_tof_sensor(i2c)
 
@@ -122,60 +122,99 @@ def read_distance(tof):
     #Returns distance in mm with calibration offset
     return tof.ping() - 35
 
-# Main
+
+def init_ds18b20(pin_num=22):
+    global ds_sensor, roms
+    try:
+        ds_pin = Pin(pin_num)
+        ds_sensor = ds18x20.DS18X20(onewire.OneWire(ds_pin))
+        roms = ds_sensor.scan()
+        if not roms:
+            print("No DS18B20 sensors found.")
+            return None
+        print('Found DS18B20 ROMs:', roms)
+        return ds_sensor
+    except Exception as e:
+        print("DS18B20 initialization error:", e)
+        return None
+
+def read_ds18b20():
+    global ds_sensor, roms
+    temperatures = []
+    try:
+        if ds_sensor is None or not roms:
+            return []
+        ds_sensor.convert_temp()
+        time.sleep(0.75)  # allow sensor to convert temp fully
+        for rom in roms:
+            tempC = ds_sensor.read_temp(rom)
+            print('temperature (ºC):', "{:.2f}".format(tempC))
+            temperatures.append(tempC)
+        return temperatures
+    except Exception as e:
+        print("DS18B20 read error:", e)
+        return []
+
+# Main initialization
+ds_sensor = init_ds18b20()
 tof = setup_tof()
-print("Starting measurement...")
 sensor = init_spo2()
-# Simple buffers to hold data for processing
 
-# Assuming tof and sensor are already initialized,
-# and calculate_bpm, calculate_spo2 functions defined,
-# plus BUFFER_SIZE and buffers declared like:
+if not sensor:
+    print("Failed to initialize SpO2 sensor")
 
-BUFFER_SIZE_SPO2 = 50
+BUFFER_SIZE_SPO2 = 10
 BUFFER_SIZE_TOF = 10
 
 ir_buffer = []
 red_buffer = []
-
 tof_buffer = []
-tof_print_counter = 0
+
 spo2_print_counter = 0
+tof_print_counter = 0
+temp_print_counter = 0
 
 while True:
-    # --- Read and buffer ToF ---
-    distance = tof.ping() - 35
-    tof_buffer.append(distance)
-    if len(tof_buffer) > BUFFER_SIZE_TOF:
-        tof_buffer.pop(0)
-
-    tof_print_counter += 1
-    if tof_print_counter >= BUFFER_SIZE_TOF:
-        avg_distance = sum(tof_buffer) / len(tof_buffer)
-        print(f"Avg ToF distance (last {BUFFER_SIZE_TOF} samples): {avg_distance:.2f} mm")
-        tof_print_counter = 0
-
-    # --- Read and buffer SpO2 ---
     try:
-        ir, red = sensor.read_fifo()
-        ir_buffer.append(ir)
-        red_buffer.append(red)
+        # ToF reading
+        distance = tof.ping()
+        if distance is not None:
+            calibrated_dist = distance - 35
+            tof_buffer.append(calibrated_dist)
+            if len(tof_buffer) > BUFFER_SIZE_TOF:
+                tof_buffer.pop(0)
 
-        if len(ir_buffer) > BUFFER_SIZE_SPO2:
-            ir_buffer.pop(0)
-            red_buffer.pop(0)
+        tof_print_counter += 1
+        if tof_print_counter >= BUFFER_SIZE_TOF:
+            avg_distance = sum(tof_buffer) / len(tof_buffer) if tof_buffer else 0
+            print(f"Avg ToF distance (last {BUFFER_SIZE_TOF} samples): {avg_distance:.2f} mm")
+            tof_print_counter = 0
 
-        spo2_print_counter += 1
-        # Print every 50 readings (~1 second at 50Hz)
-        if spo2_print_counter >= BUFFER_SIZE_SPO2:
-            bpm = calculate_bpm(ir_buffer)
-            spo2 = calculate_spo2(ir_buffer, red_buffer)
-            print(f"BPM: {bpm}, SpO2: {spo2}%")
-            spo2_print_counter = 0
+        # SpO2 reading
+        if sensor:
+            ir, red = sensor.read_fifo()
+            ir_buffer.append(ir)
+            red_buffer.append(red)
+            if len(ir_buffer) > BUFFER_SIZE_SPO2:
+                ir_buffer.pop(0)
+                red_buffer.pop(0)
+
+            spo2_print_counter += 1
+            if spo2_print_counter >= BUFFER_SIZE_SPO2:
+                bpm = calculate_bpm(ir_buffer)
+                spo2_val = calculate_spo2(ir_buffer, red_buffer)
+                print(f"BPM: {bpm}, SpO2: {spo2_val}%")
+                spo2_print_counter = 0
+
+        # Temperature reading every 15 loops (~0.3s if sleep=0.02)
+        temp_print_counter += 1
+        if temp_print_counter > 15:
+            temps = read_ds18b20()
+            temp_print_counter = 0
+
+        time.sleep(0.02)
 
     except Exception as e:
-        print("MAX30100 read error:", e)
-
-    time.sleep(0.02)  # 50Hz sampling
-
+        print("Error:", e)
+        time.sleep(1)
 
