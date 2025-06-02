@@ -36,4 +36,4 @@ tof.set_Vcsel_pulse_period(tof.vcsel_period_type[1], 8)
 
 while True:
 # Start ranging
-    print(tof.ping()-35, "mm")
+    print(tof.ping()-20, "mm")
