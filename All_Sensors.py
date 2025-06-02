@@ -85,10 +85,9 @@ def read_spo2_bpm():
         print("MAX30100 read error:", e)
     return None, None
 
-"""print("Starting measurement...")
 
 def wait_for_tof_sensor(i2c):
-    """Keep scanning until VL53L0X sensor is found on I2C bus."""
+    #Keep scanning until VL53L0X sensor is found on I2C bus.
     print("Scanning for VL53L0X sensor...")
     while True:
         devices = i2c.scan()
@@ -121,11 +120,12 @@ def setup_tof():
     return tof
 
 def read_distance(tof):
-    """Returns distance in mm with calibration offset"""
+    #Returns distance in mm with calibration offset
     return tof.ping() - 35
 
 # Main
 tof = setup_tof()
+print("Starting measurement...")
 
 while True:
     distance = read_distance(tof)
@@ -152,4 +152,4 @@ while True:
     except Exception as e:
         print("Error:", e)
         time.sleep(1)
-"""
+
