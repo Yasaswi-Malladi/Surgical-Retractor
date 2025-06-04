@@ -1,0 +1,141 @@
+import utime
+from machine import Pin, I2C
+from vl53l0x import VL53L0X
+import time
+
+# HX711 pins
+dout = Pin(5, Pin.IN)
+sck = Pin(4, Pin.OUT)
+sck.value(0)
+
+# RGB LED pins (common cathode)
+led_red = Pin(15, Pin.OUT)
+led_green = Pin(14, Pin.OUT)
+led_blue = Pin(13, Pin.OUT)
+led_red.value(1)
+led_green.value(1)
+led_blue.value(1)
+
+def wait_for_tof_sensor(i2c):
+    print("Scanning for VL53L0X sensor...")
+    while True:
+        devices = i2c.scan()
+        if devices:
+            print("Found I2C devices:", devices)
+            return
+        print("No devices found, retrying...")
+        time.sleep(0.5)
+
+def setup_tof():
+    print("Setting up I2C...")
+    sda = Pin(0)
+    scl = Pin(1)
+    i2c = I2C(id=0, sda=sda, scl=scl)
+    wait_for_tof_sensor(i2c)
+
+    print("Creating VL53L0X object...")
+    tof = VL53L0X(i2c)
+    budget = tof.measurement_timing_budget_us
+    print("Default timing budget:", budget)
+    tof.set_measurement_timing_budget(40000)
+    tof.set_Vcsel_pulse_period(tof.vcsel_period_type[0], 12)
+    tof.set_Vcsel_pulse_period(tof.vcsel_period_type[1], 8)
+    return tof
+
+def read_distance(tof):
+    return tof.ping() - 15
+
+def read_hx711():
+    while dout.value() == 1:
+        utime.sleep_us(10)
+    count = 0
+    for _ in range(24):
+        sck.value(1)
+        utime.sleep_us(2)
+        count = count << 1
+        sck.value(0)
+        utime.sleep_us(2)
+        if dout.value():
+            count += 1
+    sck.value(1)
+    utime.sleep_us(10)
+    sck.value(0)
+    utime.sleep_us(10)
+    if count & 0x800000:
+        count |= ~0xffffff
+    return count
+
+def set_led_purple():
+    # Purple = Red ON + Blue ON (common cathode = LOW)
+    led_red.value(0)
+    led_green.value(1)
+    led_blue.value(0)
+
+def led_off():
+    led_red.value(0)
+    led_green.value(0)
+    led_blue.value(0)
+
+print("Taring... Remove any weight.")
+utime.sleep(2)
+zero_offset = read_hx711()
+print("Tared. Zero offset =", zero_offset)
+
+tof = setup_tof()
+
+# For gradient calculation over time extension
+history = []  # store tuples of (time_seconds, grams)
+time_extension = 2.0  # seconds
+
+scale_factor = 1000  # adjust after calibration
+
+prev_grams = None
+prev_distance = None
+
+import utime
+
+# Initialize CSV file
+csv_filename = "data_log.csv"
+with open(csv_filename, "w") as f:
+    f.write("timestamp_ms,grams,distance_mm,gradient\n")
+
+prev_grams = None
+prev_distance = None
+
+while True:
+    raw_val = read_hx711()
+    net_val = raw_val - zero_offset
+    grams = net_val / scale_factor
+    distance = read_distance(tof)
+
+    # Calculate gradient w.r.t extension
+    if (prev_grams is not None) and (prev_distance is not None) and (distance != prev_distance):
+        gradient = (grams - prev_grams) / (distance - prev_distance)
+    else:
+        gradient = 0  # No gradient if no previous data or zero extension change
+
+    # LED control
+    if abs(gradient) > 8:
+        set_led_purple()
+    else:
+        led_off()
+
+    # Timestamp in ms
+    timestamp = utime.ticks_ms()
+
+    # Print for debugging
+    print("Time:", timestamp, "Grams:", grams, "Distance:", distance, "Gradient:", gradient)
+
+    # Append data to CSV file
+    try:
+        with open(csv_filename, "a") as f:
+            line = "{},{:.3f},{:.1f},{:.3f}\n".format(timestamp, grams, distance, gradient)
+            f.write(line)
+    except Exception as e:
+        print("Error writing CSV:", e)
+
+    # Update previous values for next loop
+    prev_grams = grams
+    prev_distance = distance
+
+    utime.sleep(0.1)
